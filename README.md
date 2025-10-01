@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>배드민턴 스매싱 분석 웹페이지</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.0" crossorigin="anonymous"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         #container { display: flex; flex-direction: column; align-items: center; }
@@ -64,14 +64,16 @@
         });
 
         async function initPoseLandmarker() {
-            console.log('Initializing PoseLandmarker...');
+            console.log('Starting PoseLandmarker initialization...');
             try {
+                console.log('Loading FilesetResolver...');
                 const vision = await FilesetResolver.forVisionTasks(
-                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
                 );
+                console.log('FilesetResolver loaded successfully');
                 poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                     baseOptions: {
-                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task`,
                         delegate: "CPU"
                     },
                     runningMode: "VIDEO",
@@ -84,13 +86,18 @@
                 console.log('PoseLandmarker initialized successfully');
             } catch (e) {
                 console.error('Initialization failed:', e);
-                alert('PoseLandmarker 초기화 실패. 콘솔 오류를 확인하세요.');
+                alert('PoseLandmarker 초기화 실패. 브라우저 콘솔(F12)을 확인하거나 Chrome 최신 버전을 사용하세요.');
             }
         }
 
         async function startAnalysis() {
             document.getElementById('loading').style.display = 'block';
             await initPoseLandmarker();
+            if (!poseLandmarker) {
+                alert('PoseLandmarker가 초기화되지 않았습니다. 콘솔 오류를 확인하세요.');
+                document.getElementById('loading').style.display = 'none';
+                return;
+            }
             const fileInput = document.getElementById('videoUpload');
             const file = fileInput.files[0];
             if (!file) {
@@ -134,6 +141,7 @@
                     calculateScoreAndSpeed(landmarks);
                 } else {
                     console.warn('No landmarks detected');
+                    document.getElementById('feedback').textContent = '랜드마크를 탐지하지 못했습니다. 영상에 사람이 전체적으로 보이도록 재촬영하세요.';
                 }
             } catch (e) {
                 console.error('Detection failed:', e);
@@ -167,7 +175,7 @@
                 const dx = wrist.x - lastWristPos.x;
                 const dy = wrist.y - lastWristPos.y;
                 const dist = Math.sqrt(dx*dx + dy*dy);
-                speed = Math.round(dist * 60 * 0.036); // 대략 km/h (조정 가능)
+                speed = Math.round(dist * 60 * 0.036);
             }
             lastWristPos = {x: wrist.x, y: wrist.y};
 
