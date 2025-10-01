@@ -1,13 +1,9 @@
-<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>배드민턴 스매싱 분석 웹페이지</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js" crossorigin="anonymous"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         #container { display: flex; flex-direction: column; align-items: center; }
@@ -21,7 +17,7 @@
 <body>
     <div id="container">
         <h1>배드민턴 스매싱 분석기</h1>
-        <p>스매싱 영상을 업로드하세요. Google MediaPipe를 사용해 자세를 분석하고 점수를 매깁니다. (속도 측정은 포즈 기반 추정으로 간단히 구현)</p>
+        <p>스매싱 영상을 업로드하세요. MediaPipe Tasks로 자세 분석 (속도 추정 포함).</p>
         
         <input type="file" id="videoUpload" accept="video/*" />
         <button onclick="startAnalysis()">분석 시작</button>
@@ -40,39 +36,42 @@
     </div>
 
     <script>
-        let pose;
-        let camera;
+        let poseLandmarker;
         let videoElement;
         let canvasElement;
         let canvasCtx;
         let isAnalyzing = false;
+        let lastWristPos = null;
 
-        const videoConfig = {
-            sampleRate: 50,
-            detectEveryNFrames: 10
-        };
+        // MediaPipe Pose Connections (스켈레톤 연결선 정의)
+        const POSE_CONNECTIONS = [
+            [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], // 상체 (어깨-팔)
+            [11, 23], [12, 24], [23, 24], // 어깨-엉덩이
+            [23, 25], [25, 27], [24, 26], [26, 28], // 다리
+        ];
 
-        // MediaPipe Pose 초기화
-        async function initPose() {
-            const poseConfig = {
-                locateFile: (file) => {
-                    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
-                }
-            };
-            pose = new Pose(poseConfig);
-            pose.setOptions({
-                modelComplexity: 1,
-                smoothLandmarks: true,
-                enableSegmentation: false,
-                smoothSegmentation: true,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+        // MediaPipe Pose Landmarker 초기화
+        async function initPoseLandmarker() {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+            );
+            poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numPoses: 1,
+                minPoseDetectionConfidence: 0.5,
+                minPosePresenceConfidence: 0.5,
+                minTrackingConfidence: 0.5,
+                outputWorldLandmarks: true
             });
-            pose.onResults(onPoseResults);
         }
 
-        // 비디오 업로드 처리
-        function startAnalysis() {
+        // 비디오 업로드 및 분석 시작
+        async function startAnalysis() {
+            await initPoseLandmarker();
             const fileInput = document.getElementById('videoUpload');
             const file = fileInput.files[0];
             if (!file) {
@@ -96,99 +95,92 @@
         }
 
         // 비디오 프레임 분석 루프
-        function analyzeVideo() {
-            if (!isAnalyzing) return;
+        async function analyzeVideo() {
+            if (!isAnalyzing || !poseLandmarker) return;
 
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+            const results = await poseLandmarker.detectForVideo(videoElement, performance.now());
+            if (results.landmarks && results.landmarks.length > 0) {
+                const landmarks = results.landmarks[0]; // 2D 화면 좌표
+                drawLandmarksAndConnections(landmarks);
+                calculateScoreAndSpeed(landmarks);
+            }
+
             canvasCtx.restore();
-
-            pose.send({ image: videoElement });
-
             requestAnimationFrame(analyzeVideo);
         }
 
-        // 포즈 결과 처리
-        function onPoseResults(results) {
-            if (!results.poseLandmarks) return;
+        // 랜드마크와 연결선 그리기
+        function drawLandmarksAndConnections(landmarks) {
+            // 관절 포인트 (빨간 점)
+            landmarks.forEach(lm => {
+                if (lm.visibility && lm.visibility < 0.5) return; // 낮은 신뢰도 포인트 제외
+                canvasCtx.beginPath();
+                canvasCtx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, 4, 0, 2 * Math.PI);
+                canvasCtx.fillStyle = '#FF0000';
+                canvasCtx.fill();
+            });
 
-            // 랜드마크 그리기
-            canvasCtx.save();
-            drawingUtils.drawLandmarks(
-                results.poseLandmarks,
-                {color: '#FF0000', lineWidth: 2},
-                drawingUtils.drawConnectors(
-                    results.poseLandmarks,
-                    Pose.POSE_CONNECTIONS,
-                    {color: '#00FF00', lineWidth: 4}
-                )
-            );
-            canvasCtx.restore();
+            // 연결선 (녹색)
+            canvasCtx.strokeStyle = '#00FF00';
+            canvasCtx.lineWidth = 2;
+            POSE_CONNECTIONS.forEach(([start, end]) => {
+                const startLm = landmarks[start];
+                const endLm = landmarks[end];
+                if (startLm && endLm && startLm.visibility > 0.5 && endLm.visibility > 0.5) {
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(startLm.x * canvasElement.width, startLm.y * canvasElement.height);
+                    canvasCtx.lineTo(endLm.x * canvasElement.width, endLm.y * canvasElement.height);
+                    canvasCtx.stroke();
+                }
+            });
+        }
 
-            // 자세 분석 및 점수 계산 (배드민턴 스매싱 포즈 예시)
-            // 스매싱 포즈: 오른팔 높이, 몸 균형, 다리 굽힘 등
-            const landmarks = results.poseLandmarks;
-            let score = 10; // 최대 10점
-            let speed = 0; // 추정 속도 (km/h)
+        // 자세 점수 및 속도 계산
+        function calculateScoreAndSpeed(landmarks) {
+            let score = 10;
+            let speed = 0;
 
-            // 예: 오른쪽 어깨(12), 팔꿈치(14), 손목(16) 각도 계산 (스매시 스윙)
-            const shoulder = landmarks[12];
-            const elbow = landmarks[14];
-            const wrist = landmarks[16];
+            // 팔 각도: 어깨(12), 팔꿈치(14), 손목(16)
+            const shoulder = landmarks[12] || {x:0,y:0};
+            const elbow = landmarks[14] || {x:0,y:0};
+            const wrist = landmarks[16] || {x:0,y:0};
 
             const armAngle = calculateAngle(shoulder, elbow, wrist);
-            if (armAngle > 150 || armAngle < 90) score -= 2; // 이상적인 스매시 각도 90-150도 가정
+            if (armAngle > 150 || armAngle < 90) score -= 2;
 
-            // 몸 균형: 어깨-엉덴 각도
-            const leftShoulder = landmarks[11];
-            const rightShoulder = landmarks[12];
-            const hip = landmarks[23]; // 오른쪽 엉덴
-            const torsoAngle = Math.atan2(rightShoulder.y - hip.y, rightShoulder.x - hip.x) * 180 / Math.PI;
-            if (Math.abs(torsoAngle) > 20) score -= 1; // 앞으로 기울임
+            // 속도: 손목 위치 변화
+            if (lastWristPos) {
+                const dx = wrist.x - lastWristPos.x;
+                const dy = wrist.y - lastWristPos.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                speed = Math.round(dist * 60 * 0.036); // 대략 km/h
+            }
+            lastWristPos = wrist;
 
-            // 다리 굽힘: 무릎 각도
-            const kneeLeft = landmarks[25]; // 왼쪽 무릎
-            const ankleLeft = landmarks[27];
-            const hipLeft = landmarks[23];
-            const legAngle = calculateAngle(hipLeft, kneeLeft, ankleLeft);
-            if (legAngle > 120) score -= 1; // 충분한 굽힘 부족
-
-            // 속도 추정: 랜드마크 변화율 (간단한 프레임 간 거리)
-            // 실제로는 이전 프레임 저장 필요; 여기서는 랜드마크 속도 근사
-            const wristSpeed = Math.sqrt(
-                Math.pow(wrist.x - elbow.x, 2) + Math.pow(wrist.y - elbow.y, 2)
-            ) * 60; // 픽셀/초 가정
-            speed = Math.round(wristSpeed * 0.036); // 1픽셀=0.01m, 60fps 가정으로 km/h 변환 (대략적)
-
-            // 결과 업데이트
             document.getElementById('postureScore').textContent = Math.max(0, score);
-            document.getElementById('speed').textContent = Math.min(300, speed); // 최대 300km/h 제한
+            document.getElementById('speed').textContent = Math.min(300, speed);
             document.getElementById('feedback').textContent = getFeedback(score, speed);
         }
 
-        // 각도 계산 함수
+        // 각도 계산 (2D)
         function calculateAngle(a, b, c) {
-            const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-            let angle = Math.abs(radians * 180.0 / Math.PI);
-            if (angle > 180.0) angle = 360 - angle;
-            return angle;
+            const ab = {x: a.x - b.x, y: a.y - b.y};
+            const cb = {x: c.x - b.x, y: c.y - b.y};
+            const dot = ab.x * cb.x + ab.y * cb.y;
+            const modAb = Math.sqrt(ab.x * ab.x + ab.y * ab.y);
+            const modCb = Math.sqrt(cb.x * cb.x + cb.y * cb.y);
+            return Math.acos(dot / (modAb * modCb)) * 180 / Math.PI;
         }
 
-        // 피드백 생성
         function getFeedback(score, speed) {
-            let fb = '';
-            if (score >= 8) fb += '우수한 자세! ';
-            else if (score >= 5) fb += '양호하지만 개선 필요. ';
-            else fb += '자세 교정이 필요합니다. ';
-            fb += `스매싱 속도는 ${speed}km/h 정도로 추정됩니다. (정확한 속도 측정을 위해 shuttlecock 추적이 추가 필요)`;
+            let fb = score >= 8 ? '우수한 자세! ' : score >= 5 ? '양호하지만 개선 필요. ' : '자세 교정이 필요합니다. ';
+            fb += `스매싱 속도: ${speed}km/h (추정). 셔틀콕 추적 추가 추천.`;
             return fb;
         }
-
-        // 초기화
-        initPose().then(() => {
-            console.log('MediaPipe Pose initialized');
-        });
     </script>
 </body>
 </html>
