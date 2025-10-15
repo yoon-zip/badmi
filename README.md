@@ -3,16 +3,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>배드민턴 스매싱 분석 웹페이지</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script> <!-- 이미지 저장 -->
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         #container { display: flex; flex-direction: column; align-items: center; }
-        #videoContainer { position: relative; }
-        canvas { position: absolute; top: 0; left: 0; }
-        #results { margin-top: 20px; text-align: center; }
+        #videoContainer { position: relative; max-width: 100%; width: 100%; } /* 모바일 반응형 */
+        video { width: 100%; height: auto; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: auto; }
+        #results { margin-top: 20px; text-align: center; background: #f0f0f0; padding: 10px; border-radius: 5px; }
         input[type="file"] { margin-bottom: 10px; }
         button { padding: 10px; margin: 5px; }
         #loading { display: none; color: blue; font-weight: bold; }
         ul { text-align: left; }
+        #ranking { margin-top: 30px; text-align: center; }
+        #rankingList { list-style: none; padding: 0; }
+        #rankingList li { margin: 5px 0; }
+        #userForm { display: none; margin-top: 20px; }
     </style>
 </head>
 <body>
@@ -35,11 +41,24 @@
             <canvas id="output_canvas"></canvas>
         </div>
         
-        <div id="results">
+        <div id="results" style="display: none;">
             <h2>분석 결과</h2>
             <p>자세 점수: <span id="postureScore">0</span>/10</p>
             <p>추정 스매싱 속도: <span id="speed">0</span> km/h</p>
             <p id="feedback"></p>
+            <button onclick="downloadImage()">이미지 다운로드</button>
+        </div>
+
+        <div id="userForm">
+            <h3>랭킹 등록</h3>
+            <input type="text" id="nickname" placeholder="닉네임" required />
+            <input type="text" id="instagram" placeholder="인스타그램 ID (예: @user)" required />
+            <button onclick="saveScore()">등록</button>
+        </div>
+
+        <div id="ranking">
+            <h2>랭킹</h2>
+            <ul id="rankingList"></ul>
         </div>
     </div>
 
@@ -49,6 +68,22 @@
             FilesetResolver,
             DrawingUtils
         } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+        import { getDatabase, ref, push, onValue } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+
+        // Firebase 초기화
+        const firebaseConfig = {
+            apiKey: "AIzaSyCuv6H6jyABFX3jpBoA13PLMz5hxI_Pbt8",
+            authDomain: "badmi-581a6.firebaseapp.com",
+            databaseURL: "https://badmi-581a6-default-rtdb.firebaseio.com",
+            projectId: "badmi-581a6",
+            storageBucket: "badmi-581a6.firebasestorage.app",
+            messagingSenderId: "272556457679",
+            appId: "1:272556457679:web:3326840f45d7ca2048c1ba",
+            measurementId: "G-CNMTT9RMY8"
+        };
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
 
         let poseLandmarker;
         let videoElement;
@@ -58,8 +93,8 @@
         let isAnalyzing = false;
         let lastWristPos = null;
         let lastVideoTime = -1;
+        let currentScore = 0;
 
-        // 비디오 업로드 파일 크기 제한
         document.getElementById('videoUpload').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (file && file.size > 100 * 1024 * 1024) {
@@ -68,26 +103,21 @@
             }
         });
 
-        // 버튼 클릭 이벤트 리스너 추가
-        document.getElementById('startButton').addEventListener('click', startAnalysis);
+        document.getElementById('startButton').addEventListener('click', () => {
+            console.log('Start button clicked, calling startAnalysis');
+            startAnalysis();
+        });
 
         async function initPoseLandmarker() {
             console.log('Starting PoseLandmarker initialization...');
-            if (typeof FilesetResolver === 'undefined') {
-                console.error('FilesetResolver is not defined. Check import and script loading.');
-                alert('MediaPipe 라이브러리 로드 실패. 콘솔을 확인하세요.');
-                return;
-            }
             try {
-                console.log('Loading FilesetResolver...');
                 const vision = await FilesetResolver.forVisionTasks(
                     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
                 );
-                console.log('FilesetResolver loaded:', vision);
                 poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                     baseOptions: {
                         modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task`,
-                        delegate: "GPU" // GPU 시도, 실패 시 "CPU"로 변경
+                        delegate: "GPU"
                     },
                     runningMode: "VIDEO",
                     numPoses: 1,
@@ -96,9 +126,8 @@
                     minTrackingConfidence: 0.3,
                     outputWorldLandmarks: true
                 });
-                console.log('PoseLandmarker initialized:', poseLandmarker);
             } catch (e) {
-                console.error('Initialization failed:', { message: e.message, stack: e.stack, name: e.name });
+                console.error('Initialization failed:', e);
                 alert('PoseLandmarker 초기화 실패. 브라우저 콘솔(F12)을 확인하거나 Chrome 최신 버전을 사용하세요.');
             }
         }
@@ -128,7 +157,6 @@
             const videoSrc = URL.createObjectURL(file);
             videoElement.src = videoSrc;
             videoElement.onloadedmetadata = () => {
-                console.log('Video loaded:', videoElement.videoWidth, videoElement.videoHeight);
                 canvasElement.width = videoElement.videoWidth;
                 canvasElement.height = videoElement.videoHeight;
                 videoElement.play().catch(e => console.error('Video play failed:', e));
@@ -136,6 +164,7 @@
                 analyzeVideo();
                 document.getElementById('loading').style.display = 'none';
             };
+            videoElement.onended = () => { isAnalyzing = false; };
         }
 
         async function analyzeVideo() {
@@ -154,15 +183,15 @@
 
             try {
                 const results = await poseLandmarker.detectForVideo(videoElement, nowInMs);
-                console.log('Pose results:', results);
                 if (results.landmarks && results.landmarks.length > 0) {
                     const landmarks = results.landmarks[0];
                     drawingUtils.drawLandmarks(landmarks, {color: '#FF0000', radius: 5});
                     drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, {color: '#00FF00'});
                     calculateScoreAndSpeed(landmarks);
+                    document.getElementById('results').style.display = 'block';
+                    document.getElementById('userForm').style.display = 'block';
                 } else {
                     console.warn('No landmarks detected');
-                    document.getElementById('feedback').textContent = '랜드마크를 탐지하지 못했습니다. 영상에 사람이 전체적으로 보이도록 재촬영하세요.';
                 }
             } catch (e) {
                 console.error('Detection failed:', e);
@@ -200,9 +229,10 @@
             }
             lastWristPos = {x: wrist.x, y: wrist.y};
 
-            document.getElementById('postureScore').textContent = Math.max(0, score);
+            currentScore = Math.max(0, score);
+            document.getElementById('postureScore').textContent = currentScore;
             document.getElementById('speed').textContent = Math.min(300, speed);
-            document.getElementById('feedback').textContent = getFeedback(score, speed);
+            document.getElementById('feedback').textContent = getFeedback(currentScore, speed);
         }
 
         function calculateAngle(a, b, c) {
@@ -220,6 +250,47 @@
             fb += `스매싱 속도: ${speed}km/h (손목 움직임 추정). 팔 각도, 몸 균형, 다리 굽힘을 확인하세요.`;
             return fb;
         }
+
+        function downloadImage() {
+            html2canvas(document.getElementById('results')).then(canvas => {
+                const link = document.createElement('a');
+                link.download = 'badminton_smash_analysis.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            });
+        }
+
+        function saveScore() {
+            const nickname = document.getElementById('nickname').value;
+            const instagram = document.getElementById('instagram').value;
+            if (!nickname || !instagram) {
+                alert('닉네임과 인스타그램 ID를 입력하세요.');
+                return;
+            }
+            const data = {
+                score: currentScore,
+                nickname: nickname,
+                instagram: instagram,
+                timestamp: Date.now()
+            };
+            push(ref(db, 'scores'), data);
+            alert('등록 완료! 랭킹을 확인하세요.');
+            document.getElementById('userForm').style.display = 'none';
+        }
+
+        onValue(ref(db, 'scores'), snapshot => {
+            const rankingList = document.getElementById('rankingList');
+            rankingList.innerHTML = '';
+            const rankings = [];
+            snapshot.forEach(child => {
+                rankings.push(child.val());
+            });
+            rankings.sort((a, b) => b.score - a.score).slice(0, 10).forEach((rank, index) => {
+                const li = document.createElement('li');
+                li.textContent = `${index + 1}위: ${rank.nickname} (${rank.instagram}) - 점수: ${rank.score}`;
+                rankingList.appendChild(li);
+            });
+        });
     </script>
 </body>
 </html>
