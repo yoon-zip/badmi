@@ -3,8 +3,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>배드민턴 스매싱 분석 웹페이지</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.0" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.16"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1620248258" crossorigin="anonymous"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         #container { display: flex; flex-direction: column; align-items: center; }
@@ -67,12 +67,12 @@
             try {
                 console.log('Loading FilesetResolver...');
                 const vision = await FilesetResolver.forVisionTasks(
-                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.16/wasm"
                 );
-                console.log('FilesetResolver loaded successfully');
+                console.log('FilesetResolver loaded:', vision);
                 poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                     baseOptions: {
-                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task`,
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task`,
                         delegate: "CPU"
                     },
                     runningMode: "VIDEO",
@@ -82,9 +82,9 @@
                     minTrackingConfidence: 0.3,
                     outputWorldLandmarks: true
                 });
-                console.log('PoseLandmarker initialized successfully');
+                console.log('PoseLandmarker initialized:', poseLandmarker);
             } catch (e) {
-                console.error('Initialization failed:', e);
+                console.error('Initialization failed:', e.message, e.stack);
                 alert('PoseLandmarker 초기화 실패. 브라우저 콘솔(F12)을 확인하거나 Chrome 최신 버전을 사용하세요.');
             }
         }
