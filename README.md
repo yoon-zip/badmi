@@ -3,11 +3,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>배드민턴 스매싱 분석 웹페이지</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script> <!-- 이미지 저장 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         #container { display: flex; flex-direction: column; align-items: center; }
-        #videoContainer { position: relative; max-width: 100%; width: 100%; } /* 모바일 반응형 */
+        #videoContainer { position: relative; max-width: 100%; width: 100%; }
         video { width: 100%; height: auto; }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: auto; }
         #results { margin-top: 20px; text-align: center; background: #f0f0f0; padding: 10px; border-radius: 5px; }
@@ -46,14 +46,14 @@
             <p>자세 점수: <span id="postureScore">0</span>/10</p>
             <p>추정 스매싱 속도: <span id="speed">0</span> km/h</p>
             <p id="feedback"></p>
-            <button onclick="downloadImage()">이미지 다운로드</button>
+            <button id="downloadButton">이미지 다운로드</button>
         </div>
 
         <div id="userForm">
             <h3>랭킹 등록</h3>
             <input type="text" id="nickname" placeholder="닉네임" required />
             <input type="text" id="instagram" placeholder="인스타그램 ID (예: @user)" required />
-            <button onclick="saveScore()">등록</button>
+            <button id="saveScoreButton">등록</button>
         </div>
 
         <div id="ranking">
@@ -95,6 +95,14 @@
         let lastVideoTime = -1;
         let currentScore = 0;
 
+        // html2canvas 로드 확인
+        if (typeof html2canvas === 'undefined') {
+            console.error('html2canvas is not loaded. Check CDN.');
+            alert('이미지 저장 기능 로드 실패. 콘솔을 확인하세요.');
+        } else {
+            console.log('html2canvas loaded successfully');
+        }
+
         document.getElementById('videoUpload').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (file && file.size > 100 * 1024 * 1024) {
@@ -106,6 +114,16 @@
         document.getElementById('startButton').addEventListener('click', () => {
             console.log('Start button clicked, calling startAnalysis');
             startAnalysis();
+        });
+
+        document.getElementById('downloadButton').addEventListener('click', () => {
+            console.log('Download button clicked');
+            downloadImage();
+        });
+
+        document.getElementById('saveScoreButton').addEventListener('click', () => {
+            console.log('Save score button clicked');
+            saveScore();
         });
 
         async function initPoseLandmarker() {
@@ -252,15 +270,21 @@
         }
 
         function downloadImage() {
+            console.log('Attempting to capture image with html2canvas');
             html2canvas(document.getElementById('results')).then(canvas => {
                 const link = document.createElement('a');
                 link.download = 'badminton_smash_analysis.png';
                 link.href = canvas.toDataURL('image/png');
                 link.click();
+                console.log('Image downloaded successfully');
+            }).catch(e => {
+                console.error('html2canvas failed:', e);
+                alert('이미지 저장 실패. 콘솔을 확인하세요.');
             });
         }
 
         function saveScore() {
+            console.log('Attempting to save score to Firebase');
             const nickname = document.getElementById('nickname').value;
             const instagram = document.getElementById('instagram').value;
             if (!nickname || !instagram) {
@@ -273,12 +297,20 @@
                 instagram: instagram,
                 timestamp: Date.now()
             };
-            push(ref(db, 'scores'), data);
-            alert('등록 완료! 랭킹을 확인하세요.');
-            document.getElementById('userForm').style.display = 'none';
+            push(ref(db, 'scores'), data)
+                .then(() => {
+                    console.log('Score saved successfully:', data);
+                    alert('등록 완료! 랭킹을 확인하세요.');
+                    document.getElementById('userForm').style.display = 'none';
+                })
+                .catch(e => {
+                    console.error('Failed to save score:', e);
+                    alert('랭킹 등록 실패. 콘솔을 확인하세요.');
+                });
         }
 
         onValue(ref(db, 'scores'), snapshot => {
+            console.log('Fetching ranking data');
             const rankingList = document.getElementById('rankingList');
             rankingList.innerHTML = '';
             const rankings = [];
@@ -290,6 +322,8 @@
                 li.textContent = `${index + 1}위: ${rank.nickname} (${rank.instagram}) - 점수: ${rank.score}`;
                 rankingList.appendChild(li);
             });
+        }, error => {
+            console.error('Failed to fetch rankings:', error);
         });
     </script>
 </body>
