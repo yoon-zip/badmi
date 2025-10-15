@@ -27,7 +27,7 @@
         </ul>
         
         <input type="file" id="videoUpload" accept="video/mp4,video/quicktime,video/webm" />
-        <button onclick="startAnalysis()">분석 시작</button>
+        <button id="startButton">분석 시작</button>
         <div id="loading">분석 중...</div>
         
         <div id="videoContainer">
@@ -57,7 +57,9 @@
         let drawingUtils;
         let isAnalyzing = false;
         let lastWristPos = null;
+        let lastVideoTime = -1;
 
+        // 비디오 업로드 파일 크기 제한
         document.getElementById('videoUpload').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (file && file.size > 100 * 1024 * 1024) {
@@ -65,6 +67,9 @@
                 e.target.value = '';
             }
         });
+
+        // 버튼 클릭 이벤트 리스너 추가
+        document.getElementById('startButton').addEventListener('click', startAnalysis);
 
         async function initPoseLandmarker() {
             console.log('Starting PoseLandmarker initialization...');
@@ -74,6 +79,7 @@
                 return;
             }
             try {
+                console.log('Loading FilesetResolver...');
                 const vision = await FilesetResolver.forVisionTasks(
                     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
                 );
@@ -81,7 +87,7 @@
                 poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                     baseOptions: {
                         modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task`,
-                        delegate: "GPU"  // GPU 사용 시도 (브라우저 지원 시), 실패 시 "CPU"로 변경
+                        delegate: "GPU" // GPU 시도, 실패 시 "CPU"로 변경
                     },
                     runningMode: "VIDEO",
                     numPoses: 1,
@@ -98,6 +104,7 @@
         }
 
         async function startAnalysis() {
+            console.log('startAnalysis called');
             document.getElementById('loading').style.display = 'block';
             await initPoseLandmarker();
             if (!poseLandmarker) {
@@ -131,7 +138,6 @@
             };
         }
 
-        let lastVideoTime = -1;
         async function analyzeVideo() {
             if (!isAnalyzing || !poseLandmarker) return;
 
