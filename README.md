@@ -3,8 +3,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>배드민턴 스매싱 분석 웹페이지</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.16"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1620248258" crossorigin="anonymous"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         #container { display: flex; flex-direction: column; align-items: center; }
@@ -45,7 +43,13 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import {
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
+
         let poseLandmarker;
         let videoElement;
         let canvasElement;
@@ -64,16 +68,20 @@
 
         async function initPoseLandmarker() {
             console.log('Starting PoseLandmarker initialization...');
+            if (typeof FilesetResolver === 'undefined') {
+                console.error('FilesetResolver is not defined. Check import and script loading.');
+                alert('MediaPipe 라이브러리 로드 실패. 콘솔을 확인하세요.');
+                return;
+            }
             try {
-                console.log('Loading FilesetResolver...');
                 const vision = await FilesetResolver.forVisionTasks(
-                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.16/wasm"
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
                 );
                 console.log('FilesetResolver loaded:', vision);
                 poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                     baseOptions: {
                         modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task`,
-                        delegate: "CPU"
+                        delegate: "GPU"  // GPU 사용 시도 (브라우저 지원 시), 실패 시 "CPU"로 변경
                     },
                     runningMode: "VIDEO",
                     numPoses: 1,
@@ -84,7 +92,7 @@
                 });
                 console.log('PoseLandmarker initialized:', poseLandmarker);
             } catch (e) {
-                console.error('Initialization failed:', e.message, e.stack);
+                console.error('Initialization failed:', { message: e.message, stack: e.stack, name: e.name });
                 alert('PoseLandmarker 초기화 실패. 브라우저 콘솔(F12)을 확인하거나 Chrome 최신 버전을 사용하세요.');
             }
         }
@@ -123,15 +131,23 @@
             };
         }
 
+        let lastVideoTime = -1;
         async function analyzeVideo() {
             if (!isAnalyzing || !poseLandmarker) return;
+
+            const nowInMs = performance.now();
+            if (videoElement.currentTime === lastVideoTime) {
+                requestAnimationFrame(analyzeVideo);
+                return;
+            }
+            lastVideoTime = videoElement.currentTime;
 
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
 
             try {
-                const results = await poseLandmarker.detectForVideo(videoElement, performance.now());
+                const results = await poseLandmarker.detectForVideo(videoElement, nowInMs);
                 console.log('Pose results:', results);
                 if (results.landmarks && results.landmarks.length > 0) {
                     const landmarks = results.landmarks[0];
